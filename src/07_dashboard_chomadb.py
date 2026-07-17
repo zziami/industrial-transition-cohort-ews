@@ -1,8 +1,3 @@
-
-
-
-
-
 import os
 import dash
 from dash import dcc, html, Input, Output
@@ -13,49 +8,27 @@ import pandas as pd
 import json
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredHTMLLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
+# ============================================================
+# PART 1. 지도용 코호트-위경도 데이터 매칭
+# ============================================================
+# 회색 → 코호트 미포함 전체 공장 (~208,000개)
+# 노란색 → 코호트 Y=0 (ICR<1 진입했다가 3년 연속 안 된 기업, 8,496개)
+# 빨간색 → 코호트 Y=1 (ICR<1 3년 연속 → 한계기업 확정, 3,379개)
+# 한국은행/KDB 공식 한계기업 정의 기준
+
+코호트_필요컬럼 = 코호트[['거래소코드', '시도명', 'Y', '산단_최종분류']]
+df = 위경도.merge(코호트_필요컬럼, on='거래소코드', how='left')
+print(df.shape)
+print(f"null 체크 - 시도명: {df['시도명'].isna().sum()}, Y: {df['Y'].isna().sum()}")
 
 
-
-# ── RAG 초기화 ─────────────────────────────────
-DB_DIR = r"D:\2차현황\대시보드\chroma_db"
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-vectordb = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-# qa_chain = RetrievalQA.from_chain_type(
-#     llm=llm,
-#     retriever=vectordb.as_retriever(search_kwargs={"k": 3}),
-#)
-
-# def search_policy(시도명):
-#     query = f"{시도명} 지역 한계기업 또는 제조업 기업이 활용할 수 있는 정책금융 지원사업을 알려줘"
-#     result = qa_chain.invoke({"query": query})
-#     return result["result"]
-def search_policy(시도명):
-    query = f"{시도명} 지역 한계기업 또는 제조업 기업이 활용할 수 있는 정책금융 지원사업을 알려줘"
-    retriever = vectordb.as_retriever(search_kwargs={"k": 3})
-    docs = retriever.invoke(query)
-    context = "\n".join([d.page_content for d in docs])
-    result = llm.invoke(f"다음 정책 문서를 참고해서 질문에 답해줘:\n{context}\n\n질문: {query}")
-    return result.content
-
-
-
-# ── 데이터 로드 백터파일 ────────────────────────────────
-with open(r'', encoding='utf-8') as f:
-    geojson = json.load(f)
-
-산단집계_df = pd.read_excel(r'')
-시도별_전체공장 = pd.read_excel(r'')
-
-# ── 더미 데이터 (geocoding 완료 후 교체) ──────────
-시도_더미 = pd.read_excel(r'')
-시도_더미 = 시도_더미.drop(columns=['시도']).rename(columns={'시도_GeoJSON': '시도'})
-시도_더미['한계기업비율'] = (시도_더미['한계기업수'] / 시도_더미['전체기업수'] * 100).round(1)
-
-
-# ── 문서 경로 ──────────────────────────────────
+# ============================================================
+# PART 2. RAG 벡터DB 구축 (최초 1회 실행)
+# ============================================================
 DOC_DIR = r""
 DB_DIR  = r""
 
@@ -66,7 +39,6 @@ files = [
     (f"{DOC_DIR}\\20260607_산업부_산단_친환경_설비_인프라지원공고.html", "html"),
 ]
 
-# ── 문서 로드 ──────────────────────────────────
 docs = []
 for path, ftype in files:
     print(f"로드 중: {path}")
@@ -79,16 +51,14 @@ for path, ftype in files:
 
 print(f"\n전체 문서 수: {len(docs)}")
 
-# ── 청킹 ───────────────────────────────────────
 splitter = RecursiveCharacterTextSplitter(
-    chunk_size=200,   # 청크숫자 500일때 백터 132개로 너무 적어서 줄임
+    chunk_size=200,   # 청크숫자 500일때 벡터 132개로 너무 적어서 줄임
     chunk_overlap=30,
     length_function=len,
 )
 chunks = splitter.split_documents(docs)
 print(f"청크 수: {len(chunks)}")
 
-# ── 임베딩 + ChromaDB 저장 ─────────────────────
 print("\nChromaDB 저장 중...")
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 vectordb = Chroma.from_documents(
@@ -100,8 +70,35 @@ print(f"저장 완료! 경로: {DB_DIR}")
 print(f"총 벡터 수: {vectordb._collection.count()}")
 
 
+# ============================================================
+# PART 3. Dash 대시보드 실행 (벡터DB 재사용)
+# ============================================================
 
+# ── RAG 초기화 ─────────────────────────────────
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vectordb = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
+def search_policy(시도명):
+    query = f"{시도명} 지역 한계기업 또는 제조업 기업이 활용할 수 있는 정책금융 지원사업을 알려줘"
+    retriever = vectordb.as_retriever(search_kwargs={"k": 3})
+    docs = retriever.invoke(query)
+    context = "\n".join([d.page_content for d in docs])
+    result = llm.invoke(f"다음 정책 문서를 참고해서 질문에 답해줘:\n{context}\n\n질문: {query}")
+    return result.content
+
+# ── 데이터 로드 ────────────────────────────────
+with open(r'', encoding='utf-8') as f:
+    geojson = json.load(f)
+
+산단집계_df = pd.read_excel(r'')
+시도별_전체공장 = pd.read_excel(r'')
+
+시도_더미 = pd.read_excel(r'')
+시도_더미 = 시도_더미.drop(columns=['시도']).rename(columns={'시도_GeoJSON': '시도'})
+시도_더미['한계기업비율'] = (시도_더미['한계기업수'] / 시도_더미['전체기업수'] * 100).round(1)
+
+코호트_df = pd.read_excel(r'', usecols=['회계년도', '시도명', 'Y'])
 
 # ── 앱 초기화 ──────────────────────────────────
 app = dash.Dash(__name__, external_stylesheets=[
@@ -117,11 +114,6 @@ WHITE  = '#ffffff'
 ORANGE = '#e67e22'
 RED    = '#c0392b'
 
-
-
-
-
-
 # ── KPI 카드 컴포넌트 ──────────────────────────
 def kpi_card(title, value, color=NAVY):
     return dbc.Card([
@@ -134,7 +126,6 @@ def kpi_card(title, value, color=NAVY):
 # ── 레이아웃 ───────────────────────────────────
 app.layout = dbc.Container([
 
-    # 상단 타이틀 바
     dbc.Row([
         dbc.Col([
             html.Div([
@@ -145,7 +136,6 @@ app.layout = dbc.Container([
         ])
     ], className='mb-3'),
 
-    # KPI 카드 행
     dbc.Row([
         dbc.Col(kpi_card('전체 기업수 (2010~2025)', '219,835개'), width=3),
         dbc.Col(kpi_card('한계기업수', '3,379개 (전체기업수 대비 1.5%)', RED), width=3),
@@ -153,55 +143,38 @@ app.layout = dbc.Container([
         dbc.Col(kpi_card('개별입지 (비산단)', '133,879개', BLUE), width=3),
     ], className='mb-3'),
 
-#    지도 + 상세 패널
     dbc.Row([
-
-
-  
-
-        # 좌측 지도
-dbc.Col([
-    dbc.Row([
-        # 전국 지도
         dbc.Col([
-            dbc.Card([
-                dbc.CardHeader('전국 한계기업 분포', style={'background': NAVY, 'color': WHITE, 'fontSize': '15px', 'fontWeight': '700'}),
-                dbc.CardBody([
-                    dcc.Graph(id='choropleth-map', style={'height': '650px'},
-                              config={'displayModeBar': False})
-                ], style={'padding': '8px'})
-            ]),
-        ], width=6),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader('전국 한계기업 분포', style={'background': NAVY, 'color': WHITE, 'fontSize': '15px', 'fontWeight': '700'}),
+                        dbc.CardBody([
+                            dcc.Graph(id='choropleth-map', style={'height': '650px'}, config={'displayModeBar': False})
+                        ], style={'padding': '8px'})
+                    ]),
+                ], width=6),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardHeader(id='detail-map-title', children='시도를 클릭하세요',
+                                       style={'background': NAVY, 'color': WHITE, 'fontSize': '15px', 'fontWeight': '700'}),
+                        dbc.CardBody([
+                            dcc.Graph(id='detail-map', style={'height': '650px'}, config={'displayModeBar': False})
+                        ], style={'padding': '8px'})
+                    ]),
+                ], width=6),
+            ], className='mb-3'),
 
-        # 시도 확대지도
-        dbc.Col([
             dbc.Card([
-                dbc.CardHeader(id='detail-map-title', children='시도를 클릭하세요',
+                dbc.CardHeader('연도별 한계기업 추이',
                                style={'background': NAVY, 'color': WHITE, 'fontSize': '15px', 'fontWeight': '700'}),
                 dbc.CardBody([
-                    dcc.Graph(id='detail-map', style={'height': '650px'},
-                              config={'displayModeBar': False})
+                    dcc.Graph(id='risk-chart', style={'height': '300px'}, config={'displayModeBar': False})
                 ], style={'padding': '8px'})
             ]),
-        ], width=6),
-    ], className='mb-3'),
+        ], width=7),
 
-    # 리스크 차트
-    dbc.Card([
-        dbc.CardHeader('연도별 한계기업 추이',
-                       style={'background': NAVY, 'color': WHITE, 'fontSize': '15px', 'fontWeight': '700'}),
-        dbc.CardBody([
-            dcc.Graph(id='risk-chart', style={'height': '300px'},
-                      config={'displayModeBar': False})
-        ], style={'padding': '8px'})
-    ]),
-
-], width=7),
-
-        # 우측 패널
         dbc.Col([
-
-            # 우측 상단 상세패널
             dbc.Card([
                 dbc.CardHeader(id='panel-title', children='시도를 클릭하세요',
                                style={'background': NAVY, 'color': WHITE, 'fontSize': '20px', 'fontWeight': '700'}),
@@ -213,7 +186,6 @@ dbc.Col([
                 ], style={'padding': '12px'})
             ], className='mb-3'),
 
-            # 우측 하단 정책추천
             dbc.Card([
                 dbc.CardHeader('정책 추천',
                                style={'background': NAVY, 'color': WHITE, 'fontSize': '20px', 'fontWeight': '700'}),
@@ -224,11 +196,9 @@ dbc.Col([
                     ], style={'fontSize': '12px', 'color': '#333', 'lineHeight': '1.8', 'whiteSpace': 'pre-wrap'})
                 ], style={'padding': '12px'})
             ]),
-
         ], width=5),
-
     ]),
-    ], fluid=True, style={'backgroundColor': '#f4f6fa', 'minHeight': '100vh', 'padding': '0','fontFamily': 'Pretendard, sans-serif','overflowX': 'hidden'})
+], fluid=True, style={'backgroundColor': '#f4f6fa', 'minHeight': '100vh', 'padding': '0','fontFamily': 'Pretendard, sans-serif','overflowX': 'hidden'})
 
 
 def get_donut_values(시도_산단, 그룹명):
@@ -237,7 +207,6 @@ def get_donut_values(시도_산단, 그룹명):
         return [0, 100], '0%'
     비율 = row.iloc[0]['한계기업비율']
     return [비율, 100-비율], f'{비율}%'
-
 
 
 # ── 콜백: 지도 렌더링 ──────────────────────────
@@ -266,7 +235,8 @@ def render_map(_):
         plot_bgcolor='rgba(0,0,0,0)',
     )
     return fig
- 
+
+
 # ── 콜백: 시도 클릭 → 상세 패널 ────────────────
 @app.callback(
     Output('panel-title', 'children'),
@@ -295,12 +265,11 @@ def update_panel(clickData):
     전체공장_row = 시도별_전체공장[시도별_전체공장['시도'] == 시도명_단순]
     전체공장수 = 전체공장_row.iloc[0]['전체공장수'] if len(전체공장_row) > 0 else row['전체기업수']
 
-    # 도넛차트 데이터 뽑기
     노후_values, 노후_pct = get_donut_values(시도_산단, '노후산단')
     스마트_values, 스마트_pct = get_donut_values(시도_산단, '스마트산단')
     일반_values, 일반_pct = get_donut_values(시도_산단, '일반+국가산단')
     비산단_values, 비산단_pct = get_donut_values(시도_산단, '비산단')
-    
+
     한계기업비율_전체 = round(row['한계기업수'] / 전체공장수 * 100, 1)
 
     content = html.Div([
@@ -310,7 +279,6 @@ def update_panel(clickData):
         ], className='mb-4'),
         dbc.Row([
             dbc.Col(kpi_card('한계기업수', f"{row['한계기업수']:,}개", RED), width=6),
-            #dbc.Col(kpi_card('한계기업비율', f"{row['한계기업비율']}%", ORANGE), width=6),
             dbc.Col(kpi_card('한계기업비율', f"{한계기업비율_전체}%", ORANGE), width=6),
         ], className='mb-4'),
 
@@ -378,9 +346,10 @@ def update_panel(clickData):
         ], className='mb-2'),
     ])
 
-    return f'{시도명} 상세 현황', content 
+    return f'{시도명} 상세 현황', content
 
-# ── 콜백: 시도 클릭 → 정책 추천 ────────────────
+
+# ── 콜백: 시도 클릭 → 정책 추천 (RAG) ──────────
 @app.callback(
     Output('policy-content', 'children'),
     Input('choropleth-map', 'clickData')
@@ -395,40 +364,22 @@ def update_policy(clickData):
 
     return html.Div([
         html.Div([
-            html.A('🔗 KDB 산업은행(사업구조전환)', 
-                   href='https://www.kdb.co.kr',
-                   target='_blank',
+            html.A('🔗 KDB 산업은행(사업구조전환)', href='https://www.kdb.co.kr', target='_blank',
                    style={'fontSize': '15px', 'fontWeight': '700', 'color': BLUE, 'marginRight': '20px'}),
-            html.A('🔗 대한상공회의소(기업지원)', 
-                   href='https://www.korcham.net',
-                   target='_blank',
+            html.A('🔗 대한상공회의소(기업지원)', href='https://www.korcham.net', target='_blank',
                    style={'fontSize': '15px', 'fontWeight': '700', 'color': BLUE, 'marginRight': '20px'}),
-            html.A('🔗 산업통상자원부(친환경설비인프라)', 
-                   href='https://www.motie.go.kr',
-                   target='_blank',
+            html.A('🔗 산업통상자원부(친환경설비인프라)', href='https://www.motie.go.kr', target='_blank',
                    style={'fontSize': '15px', 'fontWeight': '700', 'color': BLUE, 'marginRight': '20px'}),
-            html.A('🔗 중소벤처기업부(정책자금융자계획)', 
-                   href='https://www.mss.go.kr',
-                   target='_blank',
+            html.A('🔗 중소벤처기업부(정책자금융자계획)', href='https://www.mss.go.kr', target='_blank',
                    style={'fontSize': '15px', 'fontWeight': '700', 'color': BLUE}),
         ], style={'marginBottom': '12px'}),
         html.Div(
             결과,
-            style={
-                'fontSize': '15px',
-                'color': '#333',
-                'lineHeight': '1.8',
-                'whiteSpace': 'pre-wrap',
-                'border': '1px solid #e0e0d8',
-                'padding': '8px',
-                'borderRadius': '4px',
-                'background': '#fafaf8'
-            }
+            style={'fontSize': '15px', 'color': '#333', 'lineHeight': '1.8', 'whiteSpace': 'pre-wrap',
+                   'border': '1px solid #e0e0d8', 'padding': '8px', 'borderRadius': '4px', 'background': '#fafaf8'}
         ),
     ])
-# ── 전역 데이터: 연도별 추이용 ─────────────────
-코호트_df = pd.read_excel(r'D:\2차현황\대시보드\20260606_코호트_정제완료.xlsx',
-                        usecols=['회계년도', '시도명', 'Y'])
+
 
 # ── 콜백: 연도별 한계기업 추이 차트 ──────────────
 @app.callback(
@@ -437,12 +388,10 @@ def update_policy(clickData):
 )
 def update_risk_chart(clickData):
     if not clickData:
-        # 전국 기본 차트
         df = 코호트_df.groupby('회계년도')['Y'].sum().reset_index()
         title = '전국 연도별 한계기업 진입수'
     else:
         시도명_geo = clickData['points'][0]['location']
-        # GeoJSON 시도명 → 우리 데이터 시도명 변환
         매핑 = {
             '서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구',
             '인천광역시': '인천', '광주광역시': '광주', '대전광역시': '대전',
@@ -456,24 +405,19 @@ def update_risk_chart(clickData):
         title = f'{시도명} 연도별 한계기업 진입수'
 
     fig = px.line(
-        df,
-        x='회계년도',
-        y='Y',
-        markers=True,
-        labels={'회계년도': '연도', 'Y': '한계기업 진입수'},
-        title=title,
+        df, x='회계년도', y='Y', markers=True,
+        labels={'회계년도': '연도', 'Y': '한계기업 진입수'}, title=title,
     )
     fig.update_traces(line_color=NAVY, marker_color=RED)
     fig.update_layout(
         margin={'r': 10, 't': 40, 'l': 10, 'b': 10},
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         xaxis=dict(dtick=1, tickangle=-45),
-        yaxis_title='한계기업 진입수',
-        xaxis_title='연도',
+        yaxis_title='한계기업 진입수', xaxis_title='연도',
         font=dict(size=11),
     )
     return fig
+
 
 # ── 콜백: 시도 클릭 → 확대지도 ──────────────────
 @app.callback(
@@ -496,40 +440,28 @@ def update_detail_map(clickData):
     }
     시도명 = 매핑.get(시도명_geo, 시도명_geo)
 
-    # 코호트 데이터 로드
-    코호트_지도 = pd.read_excel(r'D:\2차현황\대시보드\20260608_코호트_위경도_완성.xlsx')
+    코호트_지도 = pd.read_excel(r'')
     시도_df = 코호트_지도[코호트_지도['시도명'] == 시도명]
 
-    # 중심좌표
     center_lat = 시도_df['lat'].mean()
     center_lon = 시도_df['lon'].mean()
 
     fig = go.Figure()
 
-    # 회색 - 정상기업 (Y=0)
     정상 = 시도_df[시도_df['Y'] == 0]
     fig.add_trace(go.Scattermap(
-        lat=정상['lat'], lon=정상['lon'],
-        mode='markers',
-        marker=dict(size=6, color='gray', opacity=0.5),
-        name='정상기업'
+        lat=정상['lat'], lon=정상['lon'], mode='markers',
+        marker=dict(size=6, color='gray', opacity=0.5), name='정상기업'
     ))
 
-    # 빨강 - 한계기업 (Y=1)
     한계 = 시도_df[시도_df['Y'] == 1]
     fig.add_trace(go.Scattermap(
-        lat=한계['lat'], lon=한계['lon'],
-        mode='markers',
-        marker=dict(size=8, color='red', opacity=0.8),
-        name='한계기업'
+        lat=한계['lat'], lon=한계['lon'], mode='markers',
+        marker=dict(size=8, color='red', opacity=0.8), name='한계기업'
     ))
 
     fig.update_layout(
-        map=dict(
-            style='carto-positron',
-            center=dict(lat=center_lat, lon=center_lon),
-            zoom=8
-        ),
+        map=dict(style='carto-positron', center=dict(lat=center_lat, lon=center_lon), zoom=8),
         margin=dict(r=0, t=0, l=0, b=0),
         legend=dict(x=0.01, y=0.99),
         paper_bgcolor='rgba(0,0,0,0)',
