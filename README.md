@@ -1,14 +1,17 @@
 # industrial-transition-cohort-ews
-# 산업구조 전환기 비상장 외감 제조업의 한계기업 조기예측(EWS)
----------------------------------------------------------------
+<div align="center">
 
-![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
-![XGBoost](https://img.shields.io/badge/XGBoost-111111?style=flat-square&logo=xgboost&logoColor=white)
-![LightGBM](https://img.shields.io/badge/LightGBM-3776AB?style=flat-square&logo=lightgbm&logoColor=white)
-![CatBoost](https://img.shields.io/badge/CatBoost-FCCA14?style=flat-square&logo=catboost&logoColor=black)
-![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-F7931E?style=flat-square&logo=scikit-learn&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
+# 🚀 산업구조 전환기 비상장 외감 제조업 한계기업 조기예측 (EWS)
 
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)]()
+[![XGBoost](https://img.shields.io/badge/XGBoost-Model-EB6864?style=for-the-badge)]()
+[![Dash](https://img.shields.io/badge/Dash-Plotly-004B6B?style=for-the-badge&logo=plotly&logoColor=white)]()
+[![ChromaDB](https://img.shields.io/badge/Chroma-RAG-FF6F00?style=for-the-badge)]()
+[![Contribution](https://img.shields.io/badge/Role-100%25%20Sole%20Developer%20&%20Planner-critical?style=for-the-badge&color=success)]()
+
+> ### 🔥 **[Solo Project] 기획부터 데이터 전처리, 모델링, RAG 구축 및 대시보드 구현까지 전 과정 단독 100% 수행**
+
+</div>
 **비상장 외부감사대상 제조기업을 대상으로, 산업구조 전환기 코호트(2010~2023) 데이터를 활용해 이자보상배율(ICR) 기준 한계기업(3년 연속 ICR<1)을 조기 예측하는 머신러닝 프로젝트입니다.**
 
 
