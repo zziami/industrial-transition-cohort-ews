@@ -23,7 +23,7 @@
 
 ### 📊 프로젝트 결과물: 인터랙티브 대시보드 미리보기
 > **머신러닝 예측 결과와 RAG·LLM 기반 정책 추천 대시보드를 직접 확인해보세요!**  
-> *(아래 이미지를 클릭하시면 6단계 상세 소개 페이지로 이동합니다.)*
+> *(아래 이미지를 클릭하시면 7단계 상세 소개 페이지로 이동합니다.)*
 
 [![Dashboard Main Preview](images/dashboard_01_overview.png)](docs/dashboard_detail.md)
 
